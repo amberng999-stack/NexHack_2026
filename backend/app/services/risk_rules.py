@@ -1,3 +1,53 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+
+from app.models import ClauseFinding, RiskLevel
+
+
+@dataclass(frozen=True)
+class RiskRule:
+    id: str
+    category: str
+    title: str
+    severity: RiskLevel
+    patterns: tuple[str, ...]
+    explanation: str
+    recommendation: str
+
+
+RISK_RULES: tuple[RiskRule, ...] = (
+    RiskRule(
+        id="auto-renewal",
+        category="Term and termination",
+        title="Automatic renewal or silent extension",
+        severity="high",
+        patterns=(
+            r"automatic(?:ally)? renew",
+            r"auto[-\s]?renew",
+            r"unless .* written notice .* (?:30|60|90) days",
+            r"renewal term",
+            r"successive terms?",
+            r"failure to give notice .* renew",
+        ),
+        explanation="The agreement may renew without an active approval step.",
+        recommendation="Require clear renewal notice, approval workflow, and easy opt-out before renewal.",
+    ),
+    RiskRule(
+        id="unilateral-change",
+        category="Change control",
+        title="Unilateral modification right",
+        severity="critical",
+        patterns=(
+            r"sole discretion",
+            r"may modify .* at any time",
+            r"without prior notice",
+            r"unilateral(?:ly)? (?:modify|change|amend)",
+            r"right to change .* terms",
+            r"at its discretion",
+        ),
+        explanation="One party may change important terms without negotiation or notice.",
         recommendation="Require written notice, mutual consent, and a right to terminate if material terms change.",
     ),
     RiskRule(
@@ -48,109 +98,3 @@
             r"personal information .* affiliates?",
         ),
         explanation="The vendor may use, share, or transfer enterprise/customer data broadly.",
-        recommendation="Limit data use to service delivery, require data processing terms, and define retention/deletion duties.",
-    ),
-    RiskRule(
-        id="exclusive-remedy",
-        category="Remedies",
-        title="Exclusive remedy restriction",
-        severity="medium",
-        patterns=(
-            r"sole and exclusive remedy",
-            r"exclusive remedy",
-            r"limited to .* remedy",
-            r"only remedy",
-        ),
-        explanation="Available remedies may be narrowed even when business harm is larger.",
-        recommendation="Preserve injunctive relief, statutory rights, and remedies for severe breaches.",
-    ),
-    RiskRule(
-        id="ambiguous-incorporation",
-        category="Referenced documents",
-        title="Terms incorporated by external reference",
-        severity="medium",
-        patterns=(
-            r"incorporated by reference",
-            r"available at https?://",
-            r"as updated from time to time",
-            r"posted on .* website",
-            r"online terms?",
-            r"external terms?",
-        ),
-        explanation="Important terms may live outside the uploaded contract and change later.",
-        recommendation="Attach referenced terms as exhibits and freeze the applicable version at signature.",
-    ),
-)
-
-
-def analyze_text(text: str) -> list[ClauseFinding]:
-    findings: list[ClauseFinding] = []
-    lines = text.splitlines() or [text]
-
-    for rule in RISK_RULES:
-        match = _find_rule_match(rule, lines)
-        if match is None:
-            continue
-
-        line_number, excerpt, confidence = match
-        findings.append(
-            ClauseFinding(
-                id=rule.id,
-                category=rule.category,
-                title=rule.title,
-                severity=rule.severity,
-                confidence=confidence,
-                excerpt=excerpt,
-                explanation=rule.explanation,
-                recommendation=rule.recommendation,
-                line_number=line_number,
-            )
-        )
-
-    return findings
-
-
-def calculate_risk_score(findings: list[ClauseFinding]) -> int:
-    weights = {"low": 10, "medium": 18, "high": 28, "critical": 40}
-    score = sum(weights[finding.severity] for finding in findings)
-    return min(score, 100)
-
-
-def risk_level_from_score(score: int) -> RiskLevel:
-    if score >= 80:
-        return "critical"
-    if score >= 55:
-        return "high"
-    if score >= 25:
-        return "medium"
-    return "low"
-
-
-def _find_rule_match(rule: RiskRule, lines: list[str]) -> tuple[int | None, str, float] | None:
-    compiled = [re.compile(pattern, re.IGNORECASE) for pattern in rule.patterns]
-
-    for index, line in enumerate(lines, start=1):
-        clean_line = " ".join(line.split())
-        if not clean_line:
-            continue
-
-        for pattern in compiled:
-            match = pattern.search(clean_line)
-            if match:
-                return index, _excerpt_around(clean_line, match.start(), match.end()), 0.82
-
-    joined = " ".join(line.strip() for line in lines if line.strip())
-    for pattern in compiled:
-        match = pattern.search(joined)
-        if match:
-            return None, _excerpt_around(joined, match.start(), match.end()), 0.72
-
-    return None
-
-
-def _excerpt_around(text: str, start: int, end: int, radius: int = 160) -> str:
-    left = max(start - radius, 0)
-    right = min(end + radius, len(text))
-    prefix = "..." if left > 0 else ""
-    suffix = "..." if right < len(text) else ""
-    return f"{prefix}{text[left:right]}{suffix}"
