@@ -178,6 +178,17 @@ function startScan() {
   },600);
 }
 
+const formData = new FormData();
+formData.append("file", selectedFile);
+formData.append("jurisdiction", "Malaysia");
+formData.append("language", "zh/en");
+
+const response = await fetch(`${CONFIG.API_URL}/api/contracts/analyze`, {
+  method: "POST",
+  body: formData,
+});
+
+const report = await response.json();
 function showResults() {
   document.getElementById('upload-view').style.display='none';
   document.getElementById('progress-bar').classList.remove('show');
