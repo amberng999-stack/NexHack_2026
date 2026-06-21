@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════
 // CONFIG — change this to your backend URL
 // ═══════════════════════════════════════════
-const API_BASE = 'http://127.0.0.1:8000';
+const API_BASE = 'https://nexhack-2026.onrender.com';
 
 // ═══════════════════════════════════════════
 // BACKEND STATUS CHECKER
@@ -45,16 +45,9 @@ function goPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
-  
-  const pageIndex = ['home', 'scanner', 'history', 'database'].indexOf(name);
-  if (pageIndex !== -1) {
-    document.querySelectorAll('.nav-btn')[pageIndex].classList.add('active');
-  }
-  
-  if (name === 'database') {
-    loadReferenceFiles();
-  }
+  document.querySelectorAll('.nav-btn')[['home','scanner','history'].indexOf(name)].classList.add('active');
 }
+
 // ═══════════════════════════════════════════
 // CONTRACT RENDERER — builds PDF-style page
 // Maps backend "findings" → visual clauses
@@ -83,6 +76,7 @@ function renderContractPage(contract, containerEl, issueListEl, chipOk, chipWarn
     </div>
     <hr>
   `;
+
   contract.sections.forEach(sec => {
     html += `<div class="sec-title">${sec.title}</div>`;
     sec.clauses.forEach(c => {
@@ -98,6 +92,7 @@ function renderContractPage(contract, containerEl, issueListEl, chipOk, chipWarn
       html += `<div class="clause-line" id="${containerEl.id}-clause-${safeId}">${inner}</div>`;
     });
   });
+
   // Signature block
   html += `
     <div class="sig-block">
@@ -112,7 +107,9 @@ function renderContractPage(contract, containerEl, issueListEl, chipOk, chipWarn
     </div>
     <div class="doc-footer">This document is for compliance screening only. Not legal advice.</div>
   `;
+
   containerEl.innerHTML = html;
+
   // Build issues list
   issueListEl.innerHTML = issues.map(c => {
     const safeId = c.id.replace(/\./g, '_');
@@ -130,6 +127,7 @@ function renderContractPage(contract, containerEl, issueListEl, chipOk, chipWarn
     `;
   }).join('');
 }
+
 function pickIssue(clauseId, containerElId, issueListElId, suggestionTextElId, copyBtnId) {
   // Search active contract (scanner or history)
   const allClauses = _activeContract
@@ -182,25 +180,38 @@ function mapApiResponseToContract(apiResponse, file) {
   const date   = now.toLocaleDateString('en-MY', { day:'2-digit', month:'short', year:'numeric' });
   const time   = now.toLocaleTimeString('en-MY', { hour:'2-digit', minute:'2-digit' });
 
-  // Group findings by category for display
+  // Group findings by category, preserving the order categories first appear in
+  // (this matches the original document's section order, since the backend
+  // now walks the contract section-by-section, clause-by-clause).
   const findingMap = {};
+  const categoryOrder = [];
   (apiResponse.findings || []).forEach(f => {
-    if (!findingMap[f.category]) findingMap[f.category] = [];
+    if (!findingMap[f.category]) {
+      findingMap[f.category] = [];
+      categoryOrder.push(f.category);
+    }
     findingMap[f.category].push(f);
   });
 
-  // Build sections from grouped findings
-  const sections = Object.entries(findingMap).map(([category, findings]) => ({
+  // Build sections from grouped findings, using the REAL clause id
+  // (e.g. "1.1", "2.3") extracted from the start of each excerpt,
+  // instead of a fake sequential counter.
+  const sections = categoryOrder.map(category => ({
     title: category,
-    clauses: findings.map((f, i) => ({
-      id:         `${i + 1}`,
-      text:       f.excerpt,
-      status:     severityToStatus(f.severity),
-      issue:      f.title,
-      law:        null,
-      desc:       f.explanation,
-      suggestion: f.recommendation,
-    }))
+    clauses: findingMap[category].map(f => {
+      const idMatch = f.excerpt.match(/^(\d{1,2}\.\d{1,2})\s+/);
+      const realId   = idMatch ? idMatch[1] : f.id;
+      const cleanText = idMatch ? f.excerpt.slice(idMatch[0].length) : f.excerpt;
+      return {
+        id:         realId,
+        text:       cleanText,
+        status:     severityToStatus(f.severity),
+        issue:      f.severity === 'low' ? null : f.title,
+        law:        null,
+        desc:       f.explanation || null,
+        suggestion: f.recommendation || null,
+      };
+    })
   }));
 
   // If no findings at all, show a single "all clear" section
@@ -342,8 +353,9 @@ async function startScan() {
     const contract = mapApiResponseToContract(apiData, _selectedFile);
     _activeContract = contract;
 
-    // Save to history
+    // Save to history (and persist so it survives a refresh)
     SCAN_HISTORY.unshift(contract);
+    saveHistory();
     buildHistoryList();
 
     showResults(contract);
@@ -389,11 +401,19 @@ function showResults(contract) {
     document.getElementById('copy-btn'),
   );
 
+  // Reset scroll so the document always opens at the top, like a real
+  // PDF viewer — without this, leftover scroll position from a previous
+  // scan makes the page appear to load mid-document.
+  const scannerPanel = document.getElementById('contract-page-content').closest('.contract-panel');
+  if (scannerPanel) scannerPanel.scrollTop = 0;
+  document.getElementById('issues-list').scrollTop = 0;
+
   // Show LLM review in suggestion box if available
   if (contract.llmReview) {
     document.getElementById('suggestion-text').textContent = contract.llmReview.review;
   }
 }
+
 function resetScanner() {
   _activeContract = null;
   _selectedFile   = null;
@@ -408,10 +428,38 @@ function resetScanner() {
 }
 
 // ═══════════════════════════════════════════
-// HISTORY — runtime store (session only)
-// Replace with localStorage / DB call for persistence
+// HISTORY — persisted in localStorage so it
+// survives page refreshes / new tabs.
+// Falls back to the demo CONTRACTS on first run.
 // ═══════════════════════════════════════════
-const SCAN_HISTORY = [...CONTRACTS]; // pre-load demo contracts from data.js
+const HISTORY_STORAGE_KEY = 'contractsense_scan_history_v1';
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (err) {
+    console.warn('Could not read saved history, falling back to demo data:', err);
+  }
+  return [...CONTRACTS]; // first run / corrupted storage — pre-load demo contracts
+}
+
+function saveHistory() {
+  try {
+    // Keep storage from growing unbounded over many test scans
+    const MAX_ENTRIES = 100;
+    if (SCAN_HISTORY.length > MAX_ENTRIES) SCAN_HISTORY.length = MAX_ENTRIES;
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(SCAN_HISTORY));
+  } catch (err) {
+    // e.g. storage quota exceeded or disabled — scan still works, just won't persist
+    console.warn('Could not save scan history:', err);
+  }
+}
+
+const SCAN_HISTORY = loadHistory();
 
 function buildHistoryList(filter = 'all') {
   const body = document.getElementById('history-table-body');
@@ -428,11 +476,13 @@ function buildHistoryList(filter = 'all') {
     </div>
   `).join('');
 }
+
 function filterHistory(btn, filter) {
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   buildHistoryList(filter);
 }
+
 function openHistoryDetail(id) {
   const contract = SCAN_HISTORY.find(c => c.id === id);
   if (!contract) return;
@@ -468,139 +518,43 @@ function openHistoryDetail(id) {
     document.getElementById('h-copy-btn'),
   );
 
+  // Reset scroll so the document always opens at the top, like a real
+  // PDF viewer — without this, leftover scroll position from a previously
+  // viewed contract makes the new one appear to load mid-document.
+  const historyPanel = document.getElementById('history-page-content').closest('.history-contract-panel');
+  if (historyPanel) historyPanel.scrollTop = 0;
+  document.getElementById('history-issues-list').scrollTop = 0;
+
   document.getElementById('history-detail').classList.add('show');
 }
+
 function closeHistoryDetail() {
   _activeContract = null;
   document.getElementById('history-detail').classList.remove('show');
-  activeContractObj = null;
 }
-// ═══════════════════════════════════════════
-// REFERENCE DATABASE
-// ═══════════════════════════════════════════
-function handleDbFile(input, type) {
-  if (!input.files[0]) return;
-  uploadDbFile(type, input.files[0]);
-}
-function handleDbDrop(e, type) {
-  e.preventDefault();
-  const zoneId = type === 'law' ? 'law-upload-zone' : 'policy-upload-zone';
-  document.getElementById(zoneId).classList.remove('drag');
-  const file = e.dataTransfer.files[0];
-  if (!file) return;
-  uploadDbFile(type, file);
-}
-async function uploadDbFile(type, file) {
-  const zoneId = type === 'law' ? 'law-upload-zone' : 'policy-upload-zone';
-  const zone = document.getElementById(zoneId);
-  const originalHtml = zone.innerHTML;
-  
-  zone.innerHTML = `<div class="progress-label" style="margin-top:0">Uploading ${file.name}...</div>`;
-  
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('type', type);
-  
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/reference/upload`, {
-      method: 'POST',
-      body: formData
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.detail || 'Upload failed');
-    }
-    await loadReferenceFiles();
-  } catch (error) {
-    alert('Failed to upload file: ' + error.message);
-  } finally {
-    zone.innerHTML = originalHtml;
-  }
-}
-async function loadReferenceFiles() {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/reference/files`);
-    if (!response.ok) throw new Error('Failed to load reference files');
-    const data = await response.json();
-    
-    renderReferenceFileList(data.laws, 'law-file-list', 'law');
-    renderReferenceFileList(data.policies, 'policy-file-list', 'policy');
-    
-    // Update rule pills dynamically on scanner page
-    updateRulePills(data);
-  } catch (error) {
-    console.error('Error loading reference files:', error);
-  }
-}
-function renderReferenceFileList(files, containerId, type) {
-  const container = document.getElementById(containerId);
-  if (!files || files.length === 0) {
-    container.innerHTML = `<div class="db-empty-msg">No ${type === 'law' ? 'Malaysian law' : 'company policy'} files imported yet.</div>`;
-    return;
-  }
-  
-  container.innerHTML = files.map(file => {
-    const sizeKB = (file.size_bytes / 1024).toFixed(1);
-    const dateStr = new Date(file.created_at * 1000).toLocaleDateString('en-GB', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric'
-    });
-    return `
-      <div class="db-file-item">
-        <div class="db-file-meta">
-          <div class="db-file-name" title="${file.name}">${file.name}</div>
-          <div class="db-file-size">${sizeKB} KB · Imported ${dateStr}</div>
-        </div>
-        <button class="db-delete-btn" onclick="deleteDbFile('${type}', '${file.name}')" title="Delete">✕</button>
-      </div>
-    `;
-  }).join('');
-}
-async function deleteDbFile(type, filename) {
-  if (!confirm(`Are you sure you want to delete "${filename}"?`)) return;
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/reference/files/${type}/${filename}`, {
-      method: 'DELETE'
-    });
-    if (!response.ok) throw new Error('Delete request failed');
-    await loadReferenceFiles();
-  } catch (error) {
-    alert('Failed to delete file: ' + error.message);
-  }
-}
-function updateRulePills(data) {
-  const pillsContainer = document.querySelector('.rule-pills');
-  if (!pillsContainer) return;
-  
-  let pillsHtml = '';
-  
-  // Static Core Laws
-  pillsHtml += `<div class="rule-pill active" onclick="togglePill(this)"><span class="dot"></span>Employment Act 1955</div>`;
-  pillsHtml += `<div class="rule-pill active" onclick="togglePill(this)"><span class="dot"></span>PDPA 2010</div>`;
-  pillsHtml += `<div class="rule-pill active" onclick="togglePill(this)"><span class="dot"></span>Companies Act 2016</div>`;
-  
-  // Custom Dynamic Laws
-  if (data.laws && data.laws.length > 0) {
-    data.laws.forEach(law => {
-      pillsHtml += `<div class="rule-pill active" onclick="togglePill(this)" data-type="law" data-name="${law.name}"><span class="dot"></span>Law: ${law.name}</div>`;
-    });
-  }
-  
-  // Custom Dynamic Company Policies
-  if (data.policies && data.policies.length > 0) {
-    data.policies.forEach(policy => {
-      pillsHtml += `<div class="rule-pill active" onclick="togglePill(this)" data-type="policy" data-name="${policy.name}"><span class="dot"></span>Policy: ${policy.name}</div>`;
-    });
-  } else {
-    pillsHtml += `<div class="rule-pill" onclick="togglePill(this)"><span class="dot"></span>Company policy</div>`;
-  }
-  
-  pillsContainer.innerHTML = pillsHtml;
-}
+
 // ═══════════════════════════════════════════
 // AI CHAT
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// SIDEBAR TOGGLE — hide/show issues panel for a larger contract view
+// ═══════════════════════════════════════════
+function toggleSidebar(context) {
+  const btnLabelId = context === 'scanner' ? 'scanner-sidebar-toggle-label' : 'history-sidebar-toggle-label';
+  const btnId = context === 'scanner' ? 'scanner-sidebar-toggle' : 'history-sidebar-toggle';
+
+  const panel = document.querySelector(
+    context === 'scanner' ? '.results-layout .issues-panel' : '.hd-issues-panel'
+  );
+  const label = document.getElementById(btnLabelId);
+  const btn   = document.getElementById(btnId);
+  if (!panel) return;
+
+  const collapsed = panel.classList.toggle('collapsed');
+  if (btn) btn.classList.toggle('collapsed', collapsed);
+  if (label) label.textContent = collapsed ? 'Show panel' : 'Hide panel';
+}
+
 function toggleChat() { document.getElementById('chat-box').classList.toggle('open'); }
 function toggleBig()  { document.getElementById('chat-box').classList.toggle('big'); }
 
@@ -631,4 +585,3 @@ function sendMsg() {
 // INIT
 // ═══════════════════════════════════════════
 buildHistoryList();
-loadReferenceFiles();
