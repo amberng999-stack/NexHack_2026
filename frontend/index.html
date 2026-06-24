@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>ContractSense</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@2.16.105/build/pdf.min.js"></script>
+</head>
+<body>
+
+<nav>
+  <div class="logo">ContractSense</div>
+  <div class="nav-links">
+    <button class="nav-btn active" onclick="goPage('home')">Home</button>
+    <button class="nav-btn" onclick="goPage('scanner')">Scanner</button>
+    <button class="nav-btn" onclick="goPage('autoscan')">Auto-Scan</button>
+    <button class="nav-btn" onclick="goPage('history')">History</button>
+    <button class="nav-btn" onclick="goPage('settings')">Settings</button>
+  </div>
+  <div class="backend-status" id="backend-status" onclick="checkBackend()">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-label">Checking...</span>
+  </div>
+</nav>
+
+<!-- ══ HOME ══ -->
+<div id="page-home" class="page active">
+  <div class="hero">
+    <div class="hero-badge"><span></span> AI-powered compliance checking</div>
+    <h1>Know what's in your<br><em>contract before you sign</em></h1>
+    <p>ContractSense scans your contracts against Malaysian law and your company policy — flagging risky clauses and suggesting edits in seconds.</p>
+    <div class="hero-actions">
+      <button class="btn-primary" onclick="goPage('scanner')">▶ Start scanning</button>
+    </div>
+  </div>
+  <div class="stats-row">
+    <div class="stat-card"><div class="num">3 laws</div><div class="lbl">Employment Act, PDPA, Companies Act</div></div>
+    <div class="stat-card"><div class="num">&lt; 30s</div><div class="lbl">Average scan time per contract</div></div>
+    <div class="stat-card"><div class="num">Clause-level</div><div class="lbl">Precision — not just a summary</div></div>
+  </div>
+  <div class="features">
+    <div class="features-label">What we check</div>
+    <div class="feature-grid">
+      <div class="feature-card"><div class="feature-icon" style="background:rgba(79,142,247,0.12)">📋</div><h3>Malaysian law</h3><p>Cross-checks clauses against Employment Act 1955, PDPA 2010, and Companies Act 2016 automatically.</p></div>
+      <div class="feature-card"><div class="feature-icon" style="background:rgba(123,95,255,0.12)">🏢</div><h3>Company policy</h3><p>Upload your internal HR or compliance policy, and ContractSense checks every clause against it.</p></div>
+      <div class="feature-card"><div class="feature-icon" style="background:rgba(46,204,143,0.12)">✏️</div><h3>Inline suggestions</h3><p>Every flagged clause comes with a specific rewrite suggestion — not just a warning, but a fix.</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ SCANNER ══ -->
+<div id="page-scanner" class="page">
+  <div id="upload-view" class="scanner-wrap">
+    <div class="page-title">Contract scanner</div>
+    <div class="page-sub">Upload a contract to check it against Malaysian law and your company policy.</div>
+    <div class="upload-zone" id="upload-zone"
+      ondragover="this.classList.add('drag');event.preventDefault()"
+      ondragleave="this.classList.remove('drag')"
+      ondrop="handleDrop(event)">
+      <input type="file" id="file-input" accept=".pdf,.docx,.doc" onchange="handleFile(this)">
+      <div class="upload-icon">📄</div>
+      <h3>Drop your contract here</h3>
+      <p>or click to browse files</p>
+      <div class="filetypes">PDF, DOCX, DOC · Max 20 MB</div>
+    </div>
+    <div class="file-preview" id="file-preview">
+      <div class="file-icon">📄</div>
+      <div class="file-info">
+        <div class="fname" id="file-name">–</div>
+        <div class="fsize" id="file-size">–</div>
+      </div>
+      <button class="remove-btn" onclick="removeFile()">✕</button>
+    </div>
+    <div class="rules-section">
+      <div class="section-label">Check against</div>
+      <div class="rule-pills">
+        <div class="rule-pill active" onclick="togglePill(this)"><span class="dot"></span>Employment Act 1955</div>
+        <div class="rule-pill active" onclick="togglePill(this)"><span class="dot"></span>PDPA 2010</div>
+        <div class="rule-pill active" onclick="togglePill(this)"><span class="dot"></span>Companies Act 2016</div>
+        <div class="rule-pill" onclick="togglePill(this)"><span class="dot"></span>Company policy</div>
+      </div>
+    </div>
+    <button class="scan-btn" id="scan-btn" disabled onclick="startScan()">🔍 Scan contract</button>
+    <div class="progress-bar" id="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-label" id="progress-label"></div>
+  </div>
+
+  <div class="results-layout" id="results-view">
+    <div class="contract-panel">
+      <div class="contract-panel-bar">
+        <h3 id="results-filename">–</h3>
+        <div class="chips">
+          <div class="chip ok" id="chip-ok">✓ 0</div>
+          <div class="chip warn" id="chip-warn">⚠ 0</div>
+          <div class="chip bad" id="chip-bad">✕ 0</div>
+        </div>
+        <div class="bar-actions">
+          <button class="sidebar-toggle" id="scanner-sidebar-toggle" onclick="toggleSidebar('scanner')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            <span id="scanner-sidebar-toggle-label">Hide panel</span>
+          </button>
+          <button class="btn-ghost" style="padding:6px 14px;font-size:12px" onclick="resetScanner()">← New scan</button>
+        </div>
+      </div>
+      <div class="contract-page-wrap" id="contract-page-wrap">
+        <div class="pdf-viewer" id="pdf-viewer"></div>
+        <!-- Fallback for non-PDF uploads (txt/docx) where PDF-native
+             rendering isn't available — keeps working as plain text. -->
+        <div class="contract-page" id="contract-page-content" style="display:none"></div>
+      </div>
+    </div>
+    <div class="resize-divider" id="scanner-resize-divider"></div>
+    <div class="issues-panel">
+      <div class="issues-header">
+        <h3>Compliance report</h3>
+        <div class="status-chips">
+          <div class="chip ok" id="s-chip-ok" onclick="toggleSeverityFilter('ok', 'scanner')">✓ 0 safe</div>
+          <div class="chip warn" id="s-chip-warn" onclick="toggleSeverityFilter('warn', 'scanner')">⚠ 0 warn</div>
+          <div class="chip bad" id="s-chip-bad" onclick="toggleSeverityFilter('bad', 'scanner')">✕ 0 critical</div>
+        </div>
+
+      </div>
+      <div class="issues-list" id="issues-list"></div>
+      <div class="suggestion-box" id="suggestion-box">
+        <div class="sug-label">💡 Suggested edit</div>
+        <p id="suggestion-text">Click an issue to see the suggested fix.</p>
+        <div class="sug-actions">
+          <button class="sug-btn apply" id="copy-btn">Copy suggestion</button>
+          <button class="sug-btn skip" onclick="dismissSuggestion('scanner')">Dismiss</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="safe-result" id="safe-result">
+    <div class="safe-icon">✅</div>
+    <h2>Contract looks good</h2>
+    <p>No compliance issues found. All clauses are consistent with the selected rules and laws.</p>
+    <button class="btn-primary" style="margin:28px auto 0;display:inline-flex" onclick="resetScanner()">Scan another</button>
+  </div>
+</div>
+
+<!-- ══ AUTO-SCAN ══ -->
+<div id="page-autoscan" class="page">
+  <div class="history-wrap">
+    <div class="page-title">Automated Contract Intake</div>
+    <div class="page-sub">Monitors inbound folders and connected email inboxes for new contract files.</div>
+    
+    <div class="automation-dashboard">
+      <div class="auto-header">
+        <div class="auto-title">
+          <div class="auto-icon">🤖</div>
+          <div>
+            <h3>Folder & Inbox Monitor</h3>
+            <div class="auto-status">
+              <span class="pulse-dot"></span>
+              <span class="status-text" id="auto-status-text">Active · Monitoring folders & email</span>
+            </div>
+          </div>
+        </div>
+        <div class="auto-actions">
+          <button class="filter-btn btn-sm" id="btn-trigger-scan" onclick="triggerAutoScan()">⚡ Scan folder now</button>
+        </div>
+      </div>
+      <div class="auto-grid">
+        <div class="auto-metric">
+          <span class="metric-label">Import Folder</span>
+          <span class="metric-valcode">backend/data/auto_import/</span>
+        </div>
+        <div class="auto-metric">
+          <span class="metric-label">Processed Archive</span>
+          <span class="metric-valcode">backend/data/auto_import/processed/</span>
+        </div>
+        <div class="auto-metric">
+          <span class="metric-label">Automated Scans</span>
+          <span class="metric-val" id="automated-scans-count">0</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label" style="margin-top:32px;margin-bottom:12px">Automated Scans Feed</div>
+    <div class="history-table">
+      <div class="table-header">
+        <span>Date / Time</span>
+        <span>Contract name</span>
+        <span>Company</span>
+        <span>Status</span>
+        <span></span>
+      </div>
+      <div id="autoscan-table-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ HISTORY ══ -->
+<div id="page-history" class="page">
+  <div class="history-wrap">
+    <div class="page-title">Scan history</div>
+    <div class="page-sub">All previous contract scans. Click a contract name to view the full result.</div>
+
+    <div class="history-filters">
+      <button class="filter-btn active" onclick="filterHistory(this,'all')">All</button>
+      <button class="filter-btn" onclick="filterHistory(this,'safe')">Safe</button>
+      <button class="filter-btn" onclick="filterHistory(this,'issues')">Issues</button>
+      <button class="filter-btn" onclick="filterHistory(this,'critical')">Critical</button>
+      <button class="filter-btn" id="clear-history-btn" onclick="clearScanHistory()" style="margin-left:auto">Clear history</button>
+    </div>
+    <div class="history-table">
+      <div class="table-header">
+        <span>Date / Time</span>
+        <span>Contract name</span>
+        <span>Company</span>
+        <span>Status</span>
+        <span></span>
+      </div>
+      <div id="history-table-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Full-page detail overlay -->
+<div class="history-detail" id="history-detail">
+  <div class="history-detail-bar">
+    <button class="back-btn" onclick="closeHistoryDetail()">← Back to history</button>
+    <h3 id="hd-title">–</h3>
+    <div class="status-chips" id="hd-chips"></div>
+    <button class="sidebar-toggle" id="history-sidebar-toggle" onclick="toggleSidebar('history')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      <span id="history-sidebar-toggle-label">Hide panel</span>
+    </button>
+  </div>
+  <div class="history-detail-body">
+    <div class="history-contract-panel" id="history-contract-panel">
+      <div class="pdf-viewer" id="history-pdf-viewer"></div>
+      <div class="contract-page" id="history-page-content" style="display:none"></div>
+    </div>
+    <div class="resize-divider" id="history-resize-divider"></div>
+    <div class="hd-issues-panel">
+      <div class="issues-header">
+        <h3>Compliance report</h3>
+        <div class="status-chips" id="hd-issue-chips"></div>
+      </div>
+      <div class="issues-list" id="history-issues-list"></div>
+      <div class="suggestion-box" id="history-suggestion-box">
+        <div class="sug-label">💡 Suggested edit</div>
+        <p id="history-suggestion-text">Click an issue to see the suggested fix.</p>
+        <div class="sug-actions">
+          <button class="sug-btn apply" id="h-copy-btn">Copy suggestion</button>
+          <button class="sug-btn skip" onclick="dismissSuggestion('history')">Dismiss</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+<!-- ══ SETTINGS ══ -->
+<div id="page-settings" class="page">
+  <div class="history-wrap">
+    <div class="page-title">Settings</div>
+    <div class="page-sub">Configure inbound email connection credentials and server parameters.</div>
+    
+    <div class="automation-dashboard">
+      <!-- Inbound Email Configuration -->
+      <div class="email-config-container" id="email-config-container" style="border:none; margin:0; padding:0">
+        <div class="email-config-header">
+          <div class="email-config-title">
+            <span class="email-icon">📧</span>
+            <h4>Inbound Email Integration</h4>
+          </div>
+          <div class="email-conn-status" id="email-conn-status">
+            <div class="status-dot offline" id="email-status-dot"></div>
+            <span id="email-status-label">Disconnected</span>
+          </div>
+        </div>
+        
+        <!-- Form when disconnected -->
+        <div class="email-form" id="email-connect-form">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="imap-server">IMAP Server</label>
+              <input type="text" id="imap-server" placeholder="imap.gmail.com" value="imap.gmail.com">
+            </div>
+            <div class="form-group">
+              <label for="imap-port">Port</label>
+              <input type="number" id="imap-port" placeholder="993" value="993">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="email-address">Email Address</label>
+              <input type="email" id="email-address" placeholder="yourname@gmail.com">
+            </div>
+            <div class="form-group">
+              <label for="email-password">App Password <span class="info-icon" title="Use an App Password generated from your email account security settings, NOT your primary login password.">ℹ️</span></label>
+              <input type="password" id="email-password" placeholder="xxxx xxxx xxxx xxxx">
+            </div>
+          </div>
+          <div id="email-error-msg" class="email-error-msg" style="display:none"></div>
+          <button class="filter-btn btn-sm btn-connect" id="btn-connect-email" onclick="connectEmailInbox()">🔌 Connect Inbox</button>
+        </div>
+        
+        <!-- View when connected -->
+        <div class="email-connected-view" id="email-connected-view" style="display:none">
+          <p>Monitoring inbox: <strong id="connected-email-label">yourname@gmail.com</strong></p>
+          <div class="info-tip">
+            💡 <strong>How to test:</strong> Send an email to this address with a contract attached (PDF, DOCX, or TXT). The system will automatically detect the email, extract the contract, run compliance checks, and add it below in real-time.
+          </div>
+          <button class="filter-btn btn-sm btn-disconnect" id="btn-disconnect-email" onclick="disconnectEmailInbox()">🔌 Disconnect Inbox</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI Chat -->
+<button class="chat-fab" onclick="toggleChat()">🤖</button>
+<div class="chat-box" id="chat-box">
+  <div class="chat-header">
+    <div class="chat-header-left">
+      <div class="chat-avatar">🤖</div>
+      <div><h4>ContractSense AI</h4><div class="online">Online</div></div>
+    </div>
+    <div class="chat-header-btns">
+      <button class="chat-ctrl" onclick="toggleBig()">⤢</button>
+      <button class="chat-ctrl" onclick="toggleChat()">✕</button>
+    </div>
+  </div>
+  <div class="chat-messages" id="chat-messages">
+    <div class="msg ai"><div class="msg-avatar">🤖</div><div class="msg-bubble">Hi! I can help you understand contract issues, explain Malaysian laws, or suggest edits. What would you like to know?</div></div>
+  </div>
+  <div class="chat-input-row">
+    <input class="chat-input" id="chat-input" placeholder="Ask about your contract…" onkeydown="if(event.key==='Enter')sendMsg()">
+    <button class="send-btn" onclick="sendMsg()">➤</button>
+  </div>
+</div>
+
+<script src="data.js?v=20260620a"></script>
+<script src="pdf-viewer.js?v=20260620a"></script>
+<script src="app.js?v=20260620a"></script>
+</body>
+</html>
